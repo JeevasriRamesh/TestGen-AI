@@ -188,6 +188,8 @@ def extract_test_cases(generated_text):
 
         # Accept IDs such as TC-01, TC_01, TC_LOGIN_01 and TC-PAYMENT-01.
         test_id = cleaned_row[0].strip().strip("`*_ ")
+        # Convert Unicode dash characters (for example, U+2011) to a normal hyphen.
+        test_id = re.sub(r"[‐‑‒–—−]", "-", test_id)
 
         if re.fullmatch(
             r"TC(?:[-_][A-Z0-9]+)+",
