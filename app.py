@@ -577,6 +577,8 @@ if "generated_text" in st.session_state:
     st.markdown(
         st.session_state["generated_text"]
     )
+    with st.expander("Show Raw AI Response"):
+        st.text(st.session_state["generated_text"])
     
 
     dataframe = st.session_state.get(
