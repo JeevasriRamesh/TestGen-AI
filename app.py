@@ -107,7 +107,7 @@ def split_markdown_row(line):
 
     # Protect escaped pipe characters before splitting.
     placeholder = "__ESCAPED_PIPE__"
-    line = line.replace(r"\\|", placeholder)
+    line = line.replace(r"\|", placeholder)
 
     cells = [cell.strip() for cell in line.split("|")]
 
@@ -123,7 +123,7 @@ def extract_test_cases(generated_text):
     text = re.sub(r"```(?:markdown|md|text)?", "", generated_text, flags=re.IGNORECASE)
     text = text.replace("```", "")
 
-    lines = text.replace("\\r", "").splitlines()
+    lines = text.replace("\r", "").splitlines()
 
     header = None
     test_cases = []
@@ -141,7 +141,11 @@ def extract_test_cases(generated_text):
 
         cleaned_cells = [clean_cell(cell) for cell in cells]
         normalized_cells = [
-            re.sub(r"[^a-z0-9 ]", "", cell.lower()).strip()
+            re.sub(
+                r"\s+",
+                " ",
+                re.sub(r"[^a-z0-9]+", " ", cell.lower())
+            ).strip()
             for cell in cleaned_cells
         ]
 
