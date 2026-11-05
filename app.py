@@ -92,66 +92,131 @@ def clean_cell(value):
 
 
 
+def split_markdown_row(line):
+    """
+    Split one Markdown table row into cells.
+    Handles optional outer pipes and escaped pipe characters.
+    """
+    line = line.strip()
+
+    if line.startswith("|"):
+        line = line[1:]
+
+    if line.endswith("|"):
+        line = line[:-1]
+
+    # Protect escaped pipe characters before splitting.
+    placeholder = "__ESCAPED_PIPE__"
+    line = line.replace(r"\\|", placeholder)
+
+    cells = [cell.strip() for cell in line.split("|")]
+
+    return [cell.replace(placeholder, "|") for cell in cells]
+
+
 def extract_test_cases(generated_text):
 
-    lines = generated_text.splitlines()
+    if not generated_text:
+        return None
+
+    # Remove optional Markdown code fences around the table.
+    text = re.sub(r"```(?:markdown|md|text)?", "", generated_text, flags=re.IGNORECASE)
+    text = text.replace("```", "")
+
+    lines = text.replace("\\r", "").splitlines()
 
     header = None
     test_cases = []
+    expected_columns = 0
 
     for line in lines:
 
         line = line.strip()
 
-        if not line.startswith("|"):
+        # Find the Markdown table header even if it has leading spaces.
+        if "|" not in line:
             continue
 
-        cells = [
-            cell.strip()
-            for cell in line.strip("|").split("|")
+        cells = split_markdown_row(line)
+
+        cleaned_cells = [clean_cell(cell) for cell in cells]
+        normalized_cells = [
+            re.sub(r"[^a-z0-9 ]", "", cell.lower()).strip()
+            for cell in cleaned_cells
         ]
 
-        # Identify the table header
-        if any("test case id" in cell.lower() for cell in cells):
-            header = cells
+        # Identify the header row.
+        if (
+            any("test case id" in cell for cell in normalized_cells)
+            and any("test scenario" in cell for cell in normalized_cells)
+        ):
+            header = cleaned_cells
+            expected_columns = len(header)
             continue
 
-        # Ignore Markdown separator rows
-        if all(
-            re.fullmatch(r":?-+:?", cell)
+        if header is None:
+            continue
+
+        # Ignore Markdown separator rows such as |---|:---:|.
+        if cells and all(
+            re.fullmatch(r":?[- ]{3,}:?", cell.replace(" ", ""))
             for cell in cells
         ):
             continue
 
-        if header and len(cells) == len(header):
+        # Skip blank/non-data lines.
+        if not any(cells):
+            continue
 
-            cleaned_cells = [
-                clean_cell(cell)
-                for cell in cells
-            ]
+        # If a cell value itself contains an unescaped pipe, merge
+        # extra pieces into the final column instead of discarding the row.
+        if len(cells) > expected_columns:
+            cells = (
+                cells[:expected_columns - 1]
+                + [" | ".join(cells[expected_columns - 1:])]
+            )
 
-            # Accept TC-01, TC_01, TC_LOGIN_01,
-            # TC_PAYMENT_01 and similar formats
-            if re.match(
-                r"^TC(?:[-_][A-Z0-9]+)+$",
-                cleaned_cells[0],
-                re.IGNORECASE
-            ):
-                test_cases.append(cleaned_cells)
+        # If the model omitted trailing empty cells, pad the row.
+        elif len(cells) < expected_columns:
+            cells.extend([""] * (expected_columns - len(cells)))
 
-    if not header or not test_cases:
+        cleaned_row = [clean_cell(cell) for cell in cells]
+
+        # Accept IDs such as TC-01, TC_01, TC_LOGIN_01 and TC-PAYMENT-01.
+        test_id = cleaned_row[0].strip().strip("`*_ ")
+
+        if re.fullmatch(
+            r"TC(?:[-_][A-Z0-9]+)+",
+            test_id,
+            flags=re.IGNORECASE
+        ):
+            cleaned_row[0] = test_id
+            test_cases.append(cleaned_row)
+
+    if header is None or not test_cases:
         return None
 
-    cleaned_header = [
-        clean_cell(column)
-        for column in header
-    ]
+    # Make column names safe and non-empty.
+    cleaned_header = []
+    for index, column in enumerate(header, start=1):
+        name = clean_cell(column).strip()
+        cleaned_header.append(name if name else f"Column {index}")
 
-    return pd.DataFrame(
-        test_cases,
-        columns=cleaned_header
-    )
+    # Ensure unique column names for pandas.
+    seen = {}
+    unique_header = []
+    for name in cleaned_header:
+        count = seen.get(name, 0)
+        seen[name] = count + 1
+        unique_header.append(name if count == 0 else f"{name}_{count + 1}")
 
+    dataframe = pd.DataFrame(test_cases, columns=unique_header)
+
+    # Remove completely empty rows and duplicate test case IDs.
+    dataframe = dataframe.dropna(how="all")
+    dataframe = dataframe.drop_duplicates(subset=[unique_header[0]], keep="first")
+
+    return dataframe if not dataframe.empty else None
 
 
 # --------------------------------------------------
@@ -508,6 +573,7 @@ if "generated_text" in st.session_state:
     st.markdown(
         st.session_state["generated_text"]
     )
+    
 
     dataframe = st.session_state.get(
         "test_dataframe"
